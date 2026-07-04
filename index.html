@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Awesome Fluid Web — Liquid Terminal Effect</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#06080f; --fg:#e2e8f0; --muted:#64748b;
+    --accent:#38bdf8; --accent2:#818cf8; --pink:#f472b6;
+    --card:rgba(15,20,35,0.6); --border:rgba(255,255,255,0.08);
+    --radius:14px;
+  }
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:'SF Mono','Cascadia Code','Fira Code','JetBrains Mono',Consolas,monospace;
+    overflow-x:hidden; min-height:100vh;
+  }
+
+  /* === Animated background === */
+  .bg-layer{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 30%, rgba(99,102,241,0.15), transparent 60%),
+      radial-gradient(ellipse 50% 60% at 80% 60%, rgba(56,189,248,0.12), transparent 60%),
+      radial-gradient(ellipse 40% 40% at 50% 80%, rgba(244,114,182,0.10), transparent 60%),
+      var(--bg);
+  }
+  .bg-grid{
+    position:fixed; inset:0; z-index:0; pointer-events:none; opacity:0.15;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size:50px 50px;
+  }
+
+  /* === Main container === */
+  .container{
+    position:relative; z-index:1;
+    min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; padding:40px 20px; gap:32px;
+  }
+
+  /* === Title === */
+  .title-section{text-align:center; margin-bottom:10px}
+  .title-section h1{
+    font-size:2.2rem; font-weight:700;
+    background:linear-gradient(135deg,var(--accent),var(--accent2),var(--pink));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    background-clip:text; margin-bottom:8px;
+  }
+  .title-section p{color:var(--muted); font-size:0.9rem}
+
+  /* === Terminal window === */
+  .terminal-window{
+    position:relative; width:min(680px,92vw);
+    border-radius:var(--radius); overflow:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px var(--border);
+    cursor:crosshair;
+  }
+  .terminal-canvas{
+    position:absolute; inset:0; width:100%; height:100%;
+    display:block; z-index:0;
+  }
+  /* FIX: pointer-events:none so mouse events pass through to canvas */
+  .terminal-content{position:relative; z-index:1; pointer-events:none}
+  .terminal-titlebar{
+    display:flex; align-items:center; gap:8px;
+    padding:10px 14px; backdrop-filter:blur(8px);
+    background:rgba(10,14,26,0.35);
+    border-bottom:1px solid var(--border);
+  }
+  .traffic-lights{display:flex; gap:7px}
+  .traffic-light{
+    width:12px; height:12px; border-radius:50%;
+  }
+  .tl-red{background:#ff5f57}
+  .tl-yellow{background:#febc2e}
+  .tl-green{background:#28c840}
+  .terminal-title{
+    flex:1; text-align:center; font-size:0.78rem;
+    color:var(--muted); font-weight:500;
+  }
+  .terminal-body{
+    padding:18px 20px; min-height:320px;
+    backdrop-filter:blur(2px);
+    background:rgba(6,8,15,0.25);
+    font-size:0.85rem; line-height:1.65;
+  }
+  .terminal-body .line{margin-bottom:2px; white-space:pre-wrap; word-break:break-word}
+  .prompt{color:var(--accent)}
+  .cmd{color:var(--fg)}
+  .output{color:var(--muted)}
+  .success{color:#28c840}
+  .accent{color:var(--pink)}
+  .cursor{
+    display:inline-block; width:8px; height:16px;
+    background:var(--accent); vertical-align:text-bottom;
+    animation:blink 1s step-end infinite;
+  }
+  @keyframes blink{50%{opacity:0}}
+
+  /* === Hint overlay === */
+  .hint-overlay{
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    z-index:2; pointer-events:none;
+    padding:12px 24px; border-radius:10px;
+    background:rgba(56,189,248,0.15);
+    border:1px solid rgba(56,189,248,0.3);
+    color:var(--accent); font-size:0.85rem;
+    backdrop-filter:blur(8px);
+    opacity:1; transition:opacity 1s ease;
+    white-space:nowrap;
+  }
+  .hint-overlay.fade{opacity:0}
+
+  /* === Glass card === */
+  .glass-section{
+    display:flex; flex-wrap:wrap; gap:24px;
+    justify-content:center; width:min(680px,92vw);
+  }
+  .glass-card{
+    position:relative; flex:1; min-width:200px;
+    border-radius:var(--radius); overflow:hidden;
+    box-shadow:0 12px 40px rgba(0,0,0,0.4), 0 0 0 1px var(--border);
+    min-height:160px; cursor:crosshair;
+  }
+  .glass-canvas{
+    position:absolute; inset:0; width:100%; height:100%;
+    display:block; z-index:0;
+  }
+  /* FIX: pointer-events:none */
+  .glass-content{
+    position:relative; z-index:1; padding:20px;
+    background:rgba(10,14,26,0.1);
+    pointer-events:none;
+  }
+  .glass-content h3{
+    font-size:1rem; font-weight:600; margin-bottom:8px;
+    color:var(--accent);
+  }
+  .glass-content p{font-size:0.8rem; color:var(--muted); line-height:1.5}
+
+  /* === Controls === */
+  .controls{
+    width:min(680px,92vw); padding:20px 24px;
+    border-radius:var(--radius);
+    background:var(--card); border:1px solid var(--border);
+    backdrop-filter:blur(10px);
+  }
+  .controls h2{
+    font-size:0.85rem; font-weight:600; margin-bottom:16px;
+    color:var(--accent2); text-transform:uppercase; letter-spacing:1px;
+  }
+  .control-grid{
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+    gap:14px;
+  }
+  .control-item{display:flex; flex-direction:column; gap:4px}
+  .control-item label{
+    font-size:0.72rem; color:var(--muted);
+    display:flex; justify-content:space-between;
+  }
+  .control-item label span{color:var(--accent); font-weight:600}
+  .control-item input[type="range"]{
+    -webkit-appearance:none; appearance:none;
+    height:4px; border-radius:2px;
+    background:rgba(255,255,255,0.1); outline:none;
+  }
+  .control-item input[type="range"]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none;
+    width:14px; height:14px; border-radius:50%;
+    background:var(--accent); cursor:pointer;
+    box-shadow:0 0 8px rgba(56,189,248,0.4);
+  }
+  .control-item input[type="range"]::-moz-range-thumb{
+    width:14px; height:14px; border-radius:50%;
+    background:var(--accent); cursor:pointer; border:none;
+    box-shadow:0 0 8px rgba(56,189,248,0.4);
+  }
+  .preset-row{
+    display:flex; gap:8px; flex-wrap:wrap; margin-top:16px;
+  }
+  .preset-btn{
+    padding:6px 14px; border-radius:8px;
+    border:1px solid var(--border); background:rgba(255,255,255,0.03);
+    color:var(--fg); font-size:0.72rem; cursor:pointer;
+    transition:all 0.2s; font-family:inherit;
+  }
+  .preset-btn:hover{
+    background:rgba(56,189,248,0.1); border-color:var(--accent);
+    color:var(--accent);
+  }
+  .preset-btn.active{
+    background:rgba(56,189,248,0.15); border-color:var(--accent);
+    color:var(--accent);
+  }
+
+  /* === Debug panel === */
+  .debug-panel{
+    position:fixed; bottom:12px; right:12px; z-index:100;
+    padding:8px 12px; border-radius:8px;
+    background:rgba(0,0,0,0.7); border:1px solid var(--border);
+    font-size:0.7rem; color:var(--muted);
+    pointer-events:none; min-width:180px;
+  }
+  .debug-panel .ok{color:#28c840}
+  .debug-panel .err{color:#ff5f57}
+
+  /* === Footer === */
+  .footer{
+    text-align:center; padding:20px; color:var(--muted);
+    font-size:0.75rem;
+  }
+  .footer a{color:var(--accent2); text-decoration:none}
+
+  /* === Responsive === */
+  @media(max-width:600px){
+    .title-section h1{font-size:1.5rem}
+    .terminal-body{font-size:0.78rem; min-height:260px}
+    .control-grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="bg-layer"></div>
+<div class="bg-grid"></div>
+
+<div class="container">
+  <div class="title-section">
+    <h1>Awesome Fluid Web</h1>
+    <p>WebGL Liquid Terminal Effect — 移动鼠标产生涟漪，点击产生大波纹</p>
+  </div>
+
+  <!-- Terminal Window -->
+  <div class="terminal-window" id="terminal">
+    <canvas class="terminal-canvas" id="terminalCanvas"></canvas>
+    <div class="terminal-content">
+      <div class="terminal-titlebar">
+        <div class="traffic-lights">
+          <div class="traffic-light tl-red"></div>
+          <div class="traffic-light tl-yellow"></div>
+          <div class="traffic-light tl-green"></div>
+        </div>
+        <div class="terminal-title">user@awesome-fluid-web — zsh</div>
+        <div style="width:52px"></div>
+      </div>
+      <div class="terminal-body" id="terminalBody">
+        <div class="line"><span class="prompt">➜</span> <span class="cmd">~/awesome-fluid-web</span> <span class="success">git init</span></div>
+        <div class="line output">Initialized empty Git repository in ~/awesome-fluid-web/.git/</div>
+        <div class="line"><span class="prompt">➜</span> <span class="cmd">~/awesome-fluid-web</span> npm install fluid-engine</div>
+        <div class="line output">added 1 package in 0.42s</div>
+        <div class="line"><span class="prompt">➜</span> <span class="cmd">~/awesome-fluid-web</span> <span class="accent">fluid --start</span></div>
+        <div class="line output">✓ WebGL context created</div>
+        <div class="line output">✓ Water surface shader compiled</div>
+        <div class="line output">✓ Ripple simulation active</div>
+        <div class="line output">✓ Liquid glass renderer ready</div>
+        <div class="line success">  >> Fluid engine running. Move mouse over terminal.</div>
+        <div class="line"><span class="prompt">➜</span> <span class="cmd">~/awesome-fluid-web</span> <span class="cursor"></span></div>
+      </div>
+    </div>
+    <div class="hint-overlay" id="hintOverlay">🖱️ Move mouse here to create ripples · Click for splash</div>
+  </div>
+
+  <!-- Glass Cards -->
+  <div class="glass-section">
+    <div class="glass-card" id="glassCard1">
+      <canvas class="glass-canvas" id="glassCanvas1"></canvas>
+      <div class="glass-content">
+        <h3>Liquid Glass</h3>
+        <p>SDF-based distortion with chromatic aberration, ported from the original GLSL shader.</p>
+      </div>
+    </div>
+    <div class="glass-card" id="glassCard2">
+      <canvas class="glass-canvas" id="glassCanvas2"></canvas>
+      <div class="glass-content">
+        <h3>Interactive</h3>
+        <p>Mouse and touch create real-time ripples. Click for a bigger splash.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <h2>Effect Parameters</h2>
+    <div class="control-grid" id="controlGrid"></div>
+    <div class="preset-row" id="presetRow"></div>
+  </div>
+
+  <div class="footer">
+    Based on <a href="https://github.com/bea4dev/liquid-terminal-config-shojiwm" target="_blank">liquid-terminal-config-shojiwm</a>
+    by bea4dev · WebGL port for web
+  </div>
+</div>
+
+<div class="debug-panel" id="debugPanel">
+  <div>WebGL: <span id="dbgGl" class="err">checking...</span></div>
+  <div>Ripples: <span id="dbgRipples">0</span></div>
+  <div>FPS: <span id="dbgFps">--</span></div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SHADER SOURCES
+// ═══════════════════════════════════════════════════════════════════════
+
+var VERT_SRC = [
+'attribute vec2 a_position;',
+'varying vec2 v_uv;',
+'void main(){',
+'  v_uv = a_position * 0.5 + 0.5;',
+'  gl_Position = vec4(a_position, 0.0, 1.0);',
+'}'
+].join('\n');
+
+var BG_FRAG = [
+'precision highp float;',
+'varying vec2 v_uv;',
+'uniform float u_time;',
+'uniform vec2 u_resolution;',
+'',
+'float hash(vec2 p){',
+'  return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453);',
+'}',
+'float noise(vec2 p){',
+'  vec2 i = floor(p);',
+'  vec2 f = fract(p);',
+'  f = f * f * (3.0 - 2.0 * f);',
+'  return mix(',
+'    mix(hash(i), hash(i + vec2(1.0,0.0)), f.x),',
+'    mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), f.x),',
+'    f.y',
+'  );',
+'}',
+'',
+'void main(){',
+'  vec2 uv = v_uv;',
+'  float t = u_time * 0.12;',
+'  vec3 color = vec3(0.03, 0.05, 0.10);',
+'',
+'  // Animated gradient blobs',
+'  vec2 b1 = vec2(0.25 + sin(t) * 0.12, 0.35 + cos(t * 1.3) * 0.12);',
+'  color += vec3(0.15, 0.08, 0.28) * smoothstep(0.55, 0.0, distance(uv, b1));',
+'',
+'  vec2 b2 = vec2(0.75 + cos(t * 0.7) * 0.12, 0.65 + sin(t * 1.1) * 0.12);',
+'  color += vec3(0.05, 0.15, 0.22) * smoothstep(0.55, 0.0, distance(uv, b2));',
+'',
+'  vec2 b3 = vec2(0.50 + sin(t * 0.9) * 0.15, 0.30 + cos(t * 0.6) * 0.15);',
+'  color += vec3(0.18, 0.05, 0.12) * smoothstep(0.45, 0.0, distance(uv, b3));',
+'',
+'  vec2 b4 = vec2(0.60 + sin(t * 1.2) * 0.10, 0.80 + cos(t * 0.8) * 0.10);',
+'  color += vec3(0.08, 0.18, 0.12) * smoothstep(0.50, 0.0, distance(uv, b4));',
+'',
+'  // Noise texture',
+'  float n = noise(uv * 4.0 + t) * 0.03;',
+'  color += n;',
+'',
+'  // Vignette',
+'  float vig = smoothstep(1.3, 0.3, distance(uv, vec2(0.5)));',
+'  color *= vig;',
+'',
+'  gl_FragColor = vec4(color, 1.0);',
+'}'
+].join('\n');
+
+var WATER_FRAG = [
+'precision highp float;',
+'varying vec2 v_uv;',
+'uniform float u_time;',
+'uniform float u_waveSpeed;',
+'uniform float u_waveSpeedX;',
+'uniform float u_waveSpeedY;',
+'uniform float u_emboss;',
+'uniform float u_intensity;',
+'uniform float u_frequency;',
+'uniform float u_refraction;',
+'uniform float u_reflGain;',
+'uniform float u_reflCutoff;',
+'uniform float u_reflIntensity;',
+'uniform float u_waterTint;',
+'uniform vec2 u_resolution;',
+'uniform sampler2D u_texture;',
+'uniform int u_rippleCount;',
+'uniform vec2 u_ripplePos[20];',
+'uniform float u_rippleStart[20];',
+'uniform float u_rippleStrength[20];',
+'uniform vec2 u_mousePos;',
+'uniform float u_mouseInside;',
+'',
+'const float PI = 3.1415926535897932;',
+'const int STEPS = 8;',
+'const int ANGLE = 7;',
+'const int MAX_RIPPLES = 20;',
+'',
+'float water_height(vec2 coord, float t){',
+'  float dt = 2.0 * PI / float(ANGLE);',
+'  float h = 0.0;',
+'  for(int i = 0; i < STEPS; i++){',
+'    float th = dt * float(i);',
+'    vec2 a = coord;',
+'    a.x += cos(th) * t * u_waveSpeed + t * u_waveSpeedX;',
+'    a.y -= sin(th) * t * u_waveSpeed - t * u_waveSpeedY;',
+'    h += cos((a.x * cos(th) - a.y * sin(th)) * u_frequency) * u_intensity;',
+'  }',
+'  return cos(h);',
+'}',
+'',
+'float ripple_height(vec2 px, float t){',
+'  float h = 0.0;',
+'  for(int i = 0; i < MAX_RIPPLES; i++){',
+'    if(i >= u_rippleCount) break;',
+'    float d = distance(px, u_ripplePos[i]);',
+'    float age = t - u_rippleStart[i];',
+'    if(age > 0.0 && age < 5.0){',
+'      // Wavelength ~100px, propagation speed via age*8, distance falloff, time decay',
+'      float w = sin(d * 0.06 - age * 8.0) * exp(-d * 0.003) * exp(-age * 0.7);',
+'      h += w * u_rippleStrength[i];',
+'    }',
+'  }',
+'  return h;',
+'}',
+'',
+'void main(){',
+'  vec2 uv = v_uv;',
+'  vec2 sz = max(u_resolution, vec2(1.0));',
+'  float t = u_time * 1.3;',
+'  vec2 px = uv * sz;',
+'',
+'  float wc = water_height(uv, t);',
+'  float rc = ripple_height(px, u_time);',
+'  // FIX: increased ripple influence from 0.2 to 0.6',
+'  float center = wc + rc * 0.6;',
+'',
+'  vec2 sd = 1.0 / sz;',
+'',
+'  float wdx = u_emboss * (wc - water_height(uv + vec2(sd.x, 0.0), t));',
+'  float wdy = u_emboss * (wc - water_height(uv + vec2(0.0, sd.y), t));',
+'  // FIX: increased ripple gradient influence from 0.2 to 0.6',
+'  float rdx = u_emboss * (rc - ripple_height(px + vec2(1.0, 0.0), u_time)) * 0.6;',
+'  float rdy = u_emboss * (rc - ripple_height(px + vec2(0.0, 1.0), u_time)) * 0.6;',
+'',
+'  float dx = wdx + rdx;',
+'  float dy = wdy + rdy;',
+'',
+'  vec2 ruv = uv + vec2(dx, dy) * u_refraction;',
+'  ruv = clamp(ruv, vec2(0.0), vec2(1.0));',
+'',
+'  float alpha = max(0.0, 1.0 + dx * dy * u_reflGain);',
+'  float rx = dx - u_reflCutoff;',
+'  float ry = dy - u_reflCutoff;',
+'  if(rx > 0.0 && ry > 0.0){',
+'    alpha = pow(alpha, rx * ry * u_reflIntensity);',
+'  }',
+'',
+'  vec4 color = texture2D(u_texture, ruv);',
+'',
+'  // Mouse glow — visible cursor halo',
+'  if(u_mouseInside > 0.5){',
+'    float md = distance(px, u_mousePos);',
+'    float glow = exp(-md * 0.008) * 0.25;',
+'    color.rgb += vec3(0.15, 0.35, 0.55) * glow;',
+'  }',
+'',
+'  // Ripple glow — highlight active ripple areas',
+'  float rg = abs(rc);',
+'  color.rgb += vec3(0.1, 0.2, 0.3) * rg * 0.5;',
+'',
+'  vec2 lightDir = normalize(vec2(-0.35, -0.8));',
+'  float rl = clamp(dot(normalize(vec2(dx, dy) + 0.0001), lightDir), 0.0, 1.0);',
+'  vec3 tint = mix(vec3(u_waterTint), vec3(0.70, 0.88, 1.08), 0.25);',
+'  color.rgb = color.rgb * tint * clamp(alpha, 0.72, 1.55);',
+'  color.rgb += vec3(0.16, 0.24, 0.30) * rl * 0.22;',
+'',
+'  float vig = smoothstep(0.0, 0.25, uv.y) * smoothstep(1.0, 0.72, uv.y);',
+'  color.rgb *= mix(0.88, 1.04, vig);',
+'',
+'  gl_FragColor = vec4(color.rgb, color.a);',
+'}'
+].join('\n');
+
+var GLASS_FRAG = [
+'precision highp float;',
+'varying vec2 v_uv;',
+'uniform vec2 u_resolution;',
+'uniform sampler2D u_texture;',
+'uniform float u_glassW;',
+'uniform float u_glassH;',
+'uniform float u_glassR;',
+'uniform float u_distortDepth;',
+'uniform float u_distortStrength;',
+'uniform float u_chromaShift;',
+'uniform float u_glassTint;',
+'uniform vec2 u_mousePos;',
+'uniform float u_mouseInside;',
+'uniform float u_time;',
+'',
+'float sdf(vec2 p, vec2 b, float r){',
+'  vec2 d = abs(p) - b + vec2(r);',
+'  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - r;',
+'}',
+'vec2 safeNorm(vec2 v){',
+'  float s = max(max(abs(v.x), abs(v.y)), 0.0001);',
+'  vec2 sc = v / s;',
+'  return sc / max(length(sc), 0.0001);',
+'}',
+'vec3 texAt(vec2 c, vec2 rs){',
+'  vec2 uv = clamp(c / max(rs, vec2(1.0)), vec2(0.0), vec2(1.0));',
+'  return texture2D(u_texture, uv).rgb;',
+'}',
+'',
+'void main(){',
+'  vec2 fc = v_uv * u_resolution;',
+'  vec2 gs = vec2(',
+'    u_glassW > 0.0 ? u_glassW : u_resolution.x,',
+'    u_glassH > 0.0 ? u_glassH : u_resolution.y',
+'  );',
+'  vec2 gc = u_resolution * 0.5;',
+'  vec2 gCoord = fc - gc;',
+'',
+'  float size = max(min(gs.x, gs.y), 1.0);',
+'  float ss = max(max(gs.x, gs.y), 1.0);',
+'  float inv = -sdf(gCoord / ss, gs * 0.5 / ss, u_glassR / ss) * ss / size;',
+'',
+'  if(inv < 0.0){',
+'    gl_FragColor = vec4(texAt(fc, u_resolution), 1.0);',
+'    return;',
+'  }',
+'',
+'  // Mouse-based distortion wobble',
+'  float mouseEffect = 0.0;',
+'  if(u_mouseInside > 0.5){',
+'    float md = distance(fc, u_mousePos);',
+'    mouseEffect = exp(-md * 0.01) * sin(u_time * 4.0) * 0.3;',
+'  }',
+'',
+'  vec2 ngc = safeNorm(gCoord);',
+'  float dfc = 1.0 - clamp(inv / max(u_distortDepth, 0.0001), 0.0, 1.0);',
+'  float dist = 1.0 - sqrt(max(1.0 - pow(dfc, 2.0), 0.0));',
+'  vec2 off = (dist + mouseEffect) * ngc * gs * 0.5 * u_distortStrength;',
+'  vec2 gcc = fc - off;',
+'',
+'  float edge = smoothstep(0.0, 0.02, inv);',
+'  vec2 sh = ngc * edge * u_chromaShift;',
+'  vec3 col = vec3(',
+'    texAt(gcc - sh, u_resolution).r,',
+'    texAt(gcc, u_resolution).g,',
+'    texAt(gcc + sh, u_resolution).b',
+'  );',
+'  col *= vec3(u_glassTint);',
+'',
+'  // Mouse glow on glass',
+'  if(u_mouseInside > 0.5){',
+'    float md = distance(fc, u_mousePos);',
+'    float glow = exp(-md * 0.012) * 0.2;',
+'    col += vec3(0.15, 0.3, 0.5) * glow;',
+'  }',
+'',
+'  gl_FragColor = vec4(col, 1.0);',
+'}'
+].join('\n');
+
+// ═══════════════════════════════════════════════════════════════════════
+//  WEBGL UTILITIES
+// ═══════════════════════════════════════════════════════════════════════
+
+function createShader(gl, type, src){
+  var s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    console.error('Shader compile error:', gl.getShaderInfoLog(s));
+    return null;
+  }
+  return s;
+}
+
+function createProgram(gl, vsSrc, fsSrc){
+  var vs = createShader(gl, gl.VERTEX_SHADER, vsSrc);
+  var fs = createShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+  if(!vs || !fs) return null;
+  var p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)){
+    console.error('Program link error:', gl.getProgramInfoLog(p));
+    return null;
+  }
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  return p;
+}
+
+function createTexture(gl, w, h){
+  var tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+function createFBO(gl, tex){
+  var fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return fb;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  FLUID ENGINE
+// ═══════════════════════════════════════════════════════════════════════
+
+var MAX_RIPPLES = 20;
+
+function FluidEngine(canvas, opts){
+  opts = opts || {};
+  this.canvas = canvas;
+  this.gl = canvas.getContext('webgl', {premultipliedAlpha:false, antialias:true, alpha:true})
+         || canvas.getContext('experimental-webgl', {premultipliedAlpha:false, antialias:true, alpha:true});
+  if(!this.gl){
+    console.error('WebGL not supported on canvas:', canvas.id);
+    return;
+  }
+
+  var gl = this.gl;
+
+  // Programs
+  this.bgProgram = createProgram(gl, VERT_SRC, BG_FRAG);
+  this.waterProgram = createProgram(gl, VERT_SRC, WATER_FRAG);
+  this.glassProgram = createProgram(gl, VERT_SRC, GLASS_FRAG);
+
+  if(!this.bgProgram || !this.waterProgram || !this.glassProgram){
+    console.error('Failed to compile shaders for canvas:', canvas.id);
+    return;
+  }
+
+  // Fullscreen quad
+  this.buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+
+  // Params
+  this.params = {
+    waveSpeed: 0.2,
+    waveSpeedX: 0.3,
+    waveSpeedY: 0.3,
+    emboss: 0.5,
+    intensity: 2.4,
+    frequency: 6.0,
+    refraction: 2.0,
+    reflGain: 700.0,
+    reflCutoff: 0.012,
+    reflIntensity: 200000.0,
+    waterTint: 0.92,
+    // Glass
+    glassW: 0,
+    glassH: 0,
+    glassR: 12,
+    distortDepth: 30,
+    distortStrength: 0.15,
+    chromaShift: 1.5,
+    glassTint: 1.0
+  };
+  if(opts.params){
+    for(var k in opts.params){
+      if(this.params.hasOwnProperty(k)) this.params[k] = opts.params[k];
+    }
+  }
+
+  // Ripples — FIX: use absolute time, no offset
+  this.ripples = [];
+
+  // Effect type
+  this.effect = opts.effect || 'water';
+
+  // Mouse tracking
+  this.mouseX = 0;
+  this.mouseY = 0;
+  this.lastMouseX = -1;
+  this.lastMouseY = -1;
+  this.mouseInside = false;
+
+  // Setup interaction
+  this._setupInteraction();
+
+  // Resize
+  this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+  this._resize();
+  this._resizeBound = this._resize.bind(this);
+  window.addEventListener('resize', this._resizeBound);
+
+  // FIX: use absolute time consistently — no offset tricks
+  this._loopBound = this._loop.bind(this);
+  requestAnimationFrame(this._loopBound);
+
+  // FPS tracking
+  this._frameCount = 0;
+  this._lastFpsTime = performance.now();
+  this.fps = 0;
+}
+
+FluidEngine.prototype._resize = function(){
+  var rect = this.canvas.getBoundingClientRect();
+  var w = Math.max(1, Math.floor(rect.width * this.dpr));
+  var h = Math.max(1, Math.floor(rect.height * this.dpr));
+  this.canvas.width = w;
+  this.canvas.height = h;
+  this.width = w;
+  this.height = h;
+  var gl = this.gl;
+
+  if(this.bgTexture) gl.deleteTexture(this.bgTexture);
+  if(this.bgFBO) gl.deleteFramebuffer(this.bgFBO);
+
+  this.bgTexture = createTexture(gl, w, h);
+  this.bgFBO = createFBO(gl, this.bgTexture);
+};
+
+FluidEngine.prototype._setupInteraction = function(){
+  var self = this;
+  // FIX: attach to canvas — content overlay has pointer-events:none so events reach canvas
+  // Also attach to parent for safety (events bubble up from canvas)
+  var interactEl = this.canvas;
+
+  function getPos(e){
+    var rect = self.canvas.getBoundingClientRect();
+    var x, y;
+    if(e.touches && e.touches.length > 0){
+      x = e.touches[0].clientX - rect.left;
+      y = e.touches[0].clientY - rect.top;
+    } else {
+      x = e.clientX - rect.left;
+      y = e.clientY - rect.top;
+    }
+    return {
+      x: x * self.dpr,
+      y: y * self.dpr
+    };
+  }
+
+  this._mousemove = function(e){
+    var p = getPos(e);
+    self.mouseX = p.x;
+    self.mouseY = p.y;
+    self.mouseInside = true;
+
+    // Create ripples on movement — FIX: lower threshold, higher strength
+    if(self.lastMouseX >= 0){
+      var dist = Math.hypot(p.x - self.lastMouseX, p.y - self.lastMouseY);
+      if(dist > 4){
+        self.addRipple(p.x, p.y, 0.8 + Math.min(dist / 30, 1.5));
+      }
+    }
+    self.lastMouseX = p.x;
+    self.lastMouseY = p.y;
+  };
+
+  this._mouseenter = function(){
+    self.mouseInside = true;
+  };
+
+  this._mouseleave = function(){
+    self.mouseInside = false;
+    self.lastMouseX = -1;
+    self.lastMouseY = -1;
+  };
+
+  this._click = function(e){
+    var p = getPos(e);
+    // FIX: much stronger ripple on click
+    self.addRipple(p.x, p.y, 3.5);
+  };
+
+  this._touchmove = function(e){
+    e.preventDefault();
+    var p = getPos(e);
+    self.mouseX = p.x;
+    self.mouseY = p.y;
+    self.mouseInside = true;
+    self.addRipple(p.x, p.y, 1.2);
+  };
+
+  this._touchstart = function(e){
+    var p = getPos(e);
+    self.mouseX = p.x;
+    self.mouseY = p.y;
+    self.mouseInside = true;
+    self.addRipple(p.x, p.y, 2.5);
+  };
+
+  this._touchend = function(){
+    self.mouseInside = false;
+  };
+
+  interactEl.addEventListener('mousemove', this._mousemove);
+  interactEl.addEventListener('mouseenter', this._mouseenter);
+  interactEl.addEventListener('mouseleave', this._mouseleave);
+  interactEl.addEventListener('click', this._click);
+  interactEl.addEventListener('touchmove', this._touchmove, {passive:false});
+  interactEl.addEventListener('touchstart', this._touchstart);
+  interactEl.addEventListener('touchend', this._touchend);
+};
+
+// FIX: use absolute performance.now()/1000 for ripple start time
+FluidEngine.prototype.addRipple = function(x, y, strength){
+  if(this.ripples.length >= MAX_RIPPLES){
+    this.ripples.shift();
+  }
+  this.ripples.push({
+    x: x,
+    y: y,
+    start: performance.now() / 1000,  // FIX: absolute time
+    strength: strength || 1.0
+  });
+  // Keep only recent ripples
+  var now = performance.now() / 1000;
+  this.ripples = this.ripples.filter(function(r){
+    return now - r.start < 5.0;
+  });
+};
+
+FluidEngine.prototype._renderBackground = function(time){
+  var gl = this.gl;
+  var prog = this.bgProgram;
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.bgFBO);
+  gl.viewport(0, 0, this.width, this.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+  var posLoc = gl.getAttribLocation(prog, 'a_position');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_time'), time);
+  gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), this.width, this.height);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+};
+
+FluidEngine.prototype._renderWater = function(time){
+  var gl = this.gl;
+  var prog = this.waterProgram;
+  var p = this.params;
+
+  gl.viewport(0, 0, this.width, this.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+  var posLoc = gl.getAttribLocation(prog, 'a_position');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  // Bind background texture
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, this.bgTexture);
+  gl.uniform1i(gl.getUniformLocation(prog, 'u_texture'), 0);
+
+  // Set uniforms
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_time'), time);
+  gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), this.width, this.height);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_waveSpeed'), p.waveSpeed);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_waveSpeedX'), p.waveSpeedX);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_waveSpeedY'), p.waveSpeedY);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_emboss'), p.emboss);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_intensity'), p.intensity);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_frequency'), p.frequency);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_refraction'), p.refraction);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_reflGain'), p.reflGain);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_reflCutoff'), p.reflCutoff);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_reflIntensity'), p.reflIntensity);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_waterTint'), p.waterTint);
+
+  // Mouse uniforms
+  gl.uniform2f(gl.getUniformLocation(prog, 'u_mousePos'), this.mouseX, this.mouseY);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_mouseInside'), this.mouseInside ? 1.0 : 0.0);
+
+  // Ripple uniforms
+  var rippleCount = Math.min(this.ripples.length, MAX_RIPPLES);
+  gl.uniform1i(gl.getUniformLocation(prog, 'u_rippleCount'), rippleCount);
+
+  for(var i = 0; i < rippleCount; i++){
+    var r = this.ripples[i];
+    gl.uniform2f(gl.getUniformLocation(prog, 'u_ripplePos[' + i + ']'), r.x, r.y);
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStart[' + i + ']'), r.start);
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStrength[' + i + ']'), r.strength);
+  }
+  // Fill remaining slots with dummy values
+  for(var j = rippleCount; j < MAX_RIPPLES; j++){
+    gl.uniform2f(gl.getUniformLocation(prog, 'u_ripplePos[' + j + ']'), 0, 0);
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStart[' + j + ']'), -100);
+    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStrength[' + j + ']'), 0);
+  }
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
+
+FluidEngine.prototype._renderGlass = function(time){
+  var gl = this.gl;
+  var prog = this.glassProgram;
+  var p = this.params;
+
+  gl.viewport(0, 0, this.width, this.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+  var posLoc = gl.getAttribLocation(prog, 'a_position');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, this.bgTexture);
+  gl.uniform1i(gl.getUniformLocation(prog, 'u_texture'), 0);
+
+  gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), this.width, this.height);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassW'), p.glassW);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassH'), p.glassH);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassR'), p.glassR);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_distortDepth'), p.distortDepth);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_distortStrength'), p.distortStrength);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_chromaShift'), p.chromaShift);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassTint'), p.glassTint);
+
+  // Mouse + time uniforms for glass
+  gl.uniform2f(gl.getUniformLocation(prog, 'u_mousePos'), this.mouseX, this.mouseY);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_mouseInside'), this.mouseInside ? 1.0 : 0.0);
+  gl.uniform1f(gl.getUniformLocation(prog, 'u_time'), time);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
+
+// FIX: use absolute time — no startTime offset, no rippleStartTime
+FluidEngine.prototype._loop = function(){
+  // Absolute time in seconds since page load — consistent for both wave animation and ripple age
+  var time = performance.now() / 1000;
+
+  this._renderBackground(time);
+
+  if(this.effect === 'water'){
+    this._renderWater(time);
+  } else if(this.effect === 'glass'){
+    this._renderGlass(time);
+  }
+
+  // FPS
+  this._frameCount++;
+  var now = performance.now();
+  if(now - this._lastFpsTime >= 1000){
+    this.fps = Math.round(this._frameCount * 1000 / (now - this._lastFpsTime));
+    this._frameCount = 0;
+    this._lastFpsTime = now;
+  }
+
+  requestAnimationFrame(this._loopBound);
+};
+
+FluidEngine.prototype.setParam = function(name, value){
+  if(this.params.hasOwnProperty(name)){
+    this.params[name] = value;
+  }
+};
+
+FluidEngine.prototype.getParam = function(name){
+  return this.params[name];
+};
+
+// Expose globally
+window.FluidEngine = FluidEngine;
+
+// ═══════════════════════════════════════════════════════════════════════
+//  DEMO INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════
+
+// Debug elements
+var dbgGl = document.getElementById('dbgGl');
+var dbgRipples = document.getElementById('dbgRipples');
+var dbgFps = document.getElementById('dbgFps');
+
+// Create terminal engine
+var terminalEngine = new FluidEngine(document.getElementById('terminalCanvas'), {
+  effect: 'water',
+  params: {
+    waveSpeed: 0.2, waveSpeedX: 0.3, waveSpeedY: 0.3,
+    emboss: 0.5, intensity: 2.4, frequency: 6.0,
+    refraction: 2.0, reflGain: 700, reflCutoff: 0.012,
+    reflIntensity: 200000, waterTint: 0.92
+  }
+});
+
+// Create glass engines
+var glassEngine1 = new FluidEngine(document.getElementById('glassCanvas1'), {
+  effect: 'glass',
+  params: {
+    glassW: 0, glassH: 0, glassR: 14,
+    distortDepth: 35, distortStrength: 0.18,
+    chromaShift: 2.0, glassTint: 1.05
+  }
+});
+
+var glassEngine2 = new FluidEngine(document.getElementById('glassCanvas2'), {
+  effect: 'glass',
+  params: {
+    glassW: 0, glassH: 0, glassR: 14,
+    distortDepth: 25, distortStrength: 0.12,
+    chromaShift: 1.0, glassTint: 0.95
+  }
+});
+
+// Verify engines
+if(terminalEngine && terminalEngine.gl){
+  dbgGl.textContent = 'OK';
+  dbgGl.className = 'ok';
+} else {
+  dbgGl.textContent = 'FAILED';
+  dbgGl.className = 'err';
+}
+
+// Add initial ripples to show the effect is working
+setTimeout(function(){
+  var tc = document.getElementById('terminalCanvas');
+  var rect = tc.getBoundingClientRect();
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  terminalEngine.addRipple(rect.width * 0.3 * dpr, rect.height * 0.5 * dpr, 2.0);
+}, 300);
+setTimeout(function(){
+  var tc = document.getElementById('terminalCanvas');
+  var rect = tc.getBoundingClientRect();
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  terminalEngine.addRipple(rect.width * 0.7 * dpr, rect.height * 0.4 * dpr, 1.5);
+}, 800);
+setTimeout(function(){
+  var tc = document.getElementById('terminalCanvas');
+  var rect = tc.getBoundingClientRect();
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  terminalEngine.addRipple(rect.width * 0.5 * dpr, rect.height * 0.6 * dpr, 2.5);
+}, 1500);
+
+// Fade out hint after 5 seconds
+setTimeout(function(){
+  var hint = document.getElementById('hintOverlay');
+  if(hint) hint.classList.add('fade');
+}, 5000);
+
+// Debug update loop
+setInterval(function(){
+  dbgRipples.textContent = terminalEngine.ripples.length;
+  dbgFps.textContent = terminalEngine.fps || '--';
+}, 200);
+
+// ═══════════════════════════════════════════════════════════════════════
+//  CONTROL PANEL
+// ═══════════════════════════════════════════════════════════════════════
+
+var controlDefs = [
+  {name:'waveSpeed', label:'Wave Speed', min:0, max:1, step:0.01},
+  {name:'intensity', label:'Intensity', min:0, max:5, step:0.1},
+  {name:'frequency', label:'Frequency', min:1, max:15, step:0.5},
+  {name:'refraction', label:'Refraction', min:0, max:5, step:0.1},
+  {name:'emboss', label:'Emboss', min:0, max:2, step:0.05},
+  {name:'waterTint', label:'Water Tint', min:0.5, max:1.5, step:0.01}
+];
+
+var controlGrid = document.getElementById('controlGrid');
+controlDefs.forEach(function(def){
+  var item = document.createElement('div');
+  item.className = 'control-item';
+  var label = document.createElement('label');
+  label.innerHTML = def.label + ' <span>' + terminalEngine.getParam(def.name) + '</span>';
+  var input = document.createElement('input');
+  input.type = 'range';
+  input.min = def.min;
+  input.max = def.max;
+  input.step = def.step;
+  input.value = terminalEngine.getParam(def.name);
+
+  input.addEventListener('input', function(){
+    var v = parseFloat(this.value);
+    terminalEngine.setParam(def.name, v);
+    label.querySelector('span').textContent = v.toFixed(2);
+  });
+
+  item.appendChild(label);
+  item.appendChild(input);
+  controlGrid.appendChild(item);
+});
+
+// Presets
+var presets = [
+  {name:'Calm', params:{waveSpeed:0.1, intensity:1.5, frequency:4.0, refraction:1.0, emboss:0.3, waterTint:0.95}},
+  {name:'Default', params:{waveSpeed:0.2, intensity:2.4, frequency:6.0, refraction:2.0, emboss:0.5, waterTint:0.92}},
+  {name:'Storm', params:{waveSpeed:0.5, intensity:4.0, frequency:10.0, refraction:3.5, emboss:0.8, waterTint:0.85}},
+  {name:'Crystal', params:{waveSpeed:0.15, intensity:1.0, frequency:8.0, refraction:1.5, emboss:0.4, waterTint:1.0}},
+  {name:'Deep Ocean', params:{waveSpeed:0.08, intensity:3.0, frequency:3.0, refraction:2.5, emboss:0.6, waterTint:0.8}}
+];
+
+var presetRow = document.getElementById('presetRow');
+presets.forEach(function(preset, idx){
+  var btn = document.createElement('button');
+  btn.className = 'preset-btn' + (idx === 1 ? ' active' : '');
+  btn.textContent = preset.name;
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('.preset-btn').forEach(function(b){ b.classList.remove('active'); });
+    this.classList.add('active');
+    for(var k in preset.params){
+      terminalEngine.setParam(k, preset.params[k]);
+    }
+    // Update sliders
+    controlDefs.forEach(function(def, i){
+      var input = controlGrid.children[i].querySelector('input');
+      var span = controlGrid.children[i].querySelector('span');
+      if(preset.params[def.name] !== undefined){
+        input.value = preset.params[def.name];
+        span.textContent = preset.params[def.name].toFixed(2);
+      }
+    });
+  });
+  presetRow.appendChild(btn);
+});
+
+})();
+</script>
+</body>
+</html>
