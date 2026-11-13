@@ -1,4 +1,4 @@
-# 🌊 Awesome Fluid Web
+# Awesome Fluid Web
 
 **[中文](#中文) | [English](README.md)**
 
@@ -6,43 +6,44 @@
 
 <a id="中文"></a>
 
-> 基于 WebGL 的流体/液态终端网页效果 — 水面波纹、交互式涟漪、液态玻璃畸变。零依赖，兼容 WebGL1，支持 `file://` 直接打开。
+> 浏览器里的 WebGL 水面、涟漪和液态玻璃。没有运行时依赖，使用 WebGL1，演示页可以直接用 `file://` 打开。
 
-移植自 [liquid-terminal-config-shojiwm](https://github.com/bea4dev/liquid-terminal-config-shojiwm) 的 GLSL 着色器，适配浏览器环境。
+移植自 [liquid-terminal-config-shojiwm](https://github.com/bea4dev/liquid-terminal-config-shojiwm) 的 GLSL 着色器。
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![WebGL1](https://img.shields.io/badge/WebGL-1.0-green.svg)
 ![No Dependencies](https://img.shields.io/badge/依赖-无-brightgreen.svg)
 
-## ✨ 效果一览
+## 效果
 
 | 效果 | 描述 |
 |------|------|
-| **水面波纹** | 多方向波模拟（8 步 × 7 角度），含折射、反射、光照和色调 |
-| **交互式涟漪** | 鼠标/触摸产生扩散圆形涟漪，指数衰减（最多 20 个并发，5 秒衰减） |
-| **液态玻璃** | 基于 SDF 的透镜畸变 + RGB 色差（iOS 风格毛玻璃） |
-| **程序化背景** | 动画渐变色块渲染到离屏 FBO 纹理，供水面着色器采样 |
+| **水面** | 8 步 × 7 角度的波形叠加，带折射、反射、光照和色调 |
+| **交互涟漪** | 指数衰减的扩散圆环。同时最多 20 个，每个持续 5 秒 |
+| **液态玻璃** | SDF 圆角透镜，带 RGB 色差 |
+| **程序化背景** | 动画渐变色块先画到离屏帧缓冲，再由效果着色器采样 |
 
-## 🚀 快速开始
+## 快速开始
 
-### 方式一：直接打开演示
+直接打开演示，不需要安装或构建：
 
 ```bash
 git clone https://github.com/sapsapshen/AwesomeFluidWeb.git
 cd AwesomeFluidWeb
-open index.html   # macOS  |  start index.html  # Windows  |  xdg-open index.html  # Linux
+# macOS: open index.html
+# Windows: start index.html
+# Linux: xdg-open index.html
 ```
 
-无需构建步骤，无需 npm install，直接用现代浏览器打开 `index.html` 即可。
-
-### 方式二：在你的项目中使用引擎库
+在页面里使用引擎。指针跟踪默认开启。`addRipple` 的坐标是相对 canvas **左上角** 的 CSS 像素；引擎会处理 `devicePixelRatio`（上限 2）和 WebGL 以左下角为原点的坐标。
 
 ```html
-<script src="fluid-engine.js"></script>
 <canvas id="canvas" style="width:100%;height:400px"></canvas>
+<script src="fluid-engine.js"></script>
 <script>
-  var engine = new FluidEngine(document.getElementById('canvas'), {
-    effect: 'water',   // 或 'glass'
+  var canvas = document.getElementById('canvas');
+  var engine = new FluidEngine(canvas, {
+    effect: 'water', // 或 'glass'
     params: {
       waveSpeed: 0.2,
       intensity: 2.4,
@@ -51,70 +52,59 @@ open index.html   # macOS  |  start index.html  # Windows  |  xdg-open index.htm
     }
   });
 
-  // 鼠标交互
-  canvas.addEventListener('click', function(e) {
-    var rect = canvas.getBoundingClientRect();
-    engine.addRipple(e.clientX - rect.left, e.clientY - rect.top, 3.5);
-  });
+  engine.addRipple(canvas.clientWidth * 0.5, canvas.clientHeight * 0.5, 2);
 </script>
 ```
 
-## 📁 项目结构
+盖在 canvas 上的内容必须设置 `pointer-events: none`，否则事件到不了 canvas。页面自己处理指针时，传入 `interactive: false`。
+
+## 项目结构
 
 ```
 AwesomeFluidWeb/
-├── index.html                  # 主演示页（终端 + 玻璃 + 控制面板）
-├── fluid-engine.js             # 独立可复用引擎库
-├── LICENSE                     # MIT 开源协议
-├── README.md                   # 英文文档
-├── README.zh-CN.md             # 中文文档
-└── .workbuddy/skills/awesome-fluid-web/
-    ├── SKILL.md                # WorkBuddy 技能清单
-    ├── assets/
-    │   ├── js/
-    │   │   └── fluid-engine.js           # 引擎库副本
-    │   └── templates/
-    │       ├── fluid-showcase.html       # 完整演示（同 index.html）
-    │       ├── fluid-terminal.html       # 终端窗口水面效果
-    │       ├── fluid-glass.html          # 液态玻璃卡片效果
-    │       ├── fluid-minimal.html        # 最小集成示例
-    │       └── fluid-fullscreen.html     # 全屏水面背景
-    └── references/
-        ├── shader-params.md              # 着色器参数文档
-        └── integration-guide.md          # 现有网站集成指南
+├── index.html                 # 演示页：终端、玻璃卡片、滑块和预设
+├── fluid-engine.js            # 演示页和其他页面共用的引擎
+├── test/fluid-engine.test.js  # Node.js 测试（模拟 WebGL）
+├── .github/workflows/ci.yml   # 在 Node 20 和 22 上运行 npm test
+├── package.json
+├── LICENSE
+├── README.md
+└── README.zh-CN.md
 ```
 
-## ⚙️ 参数配置
+## 参数
 
-### 水面效果（`effect: 'water'`）
+### 水面（`effect: 'water'`）
 
 | 参数 | 默认值 | 范围 | 描述 |
 |------|--------|------|------|
 | `waveSpeed` | 0.2 | 0–1 | 整体波动速度 |
-| `waveSpeedX` | 0.3 | 0–1 | 水平方向波速 |
-| `waveSpeedY` | 0.3 | 0–1 | 垂直方向波速 |
-| `intensity` | 2.4 | 0–5 | 波幅强度 |
-| `frequency` | 6.0 | 1–15 | 波频率（越高波纹越密） |
-| `emboss` | 0.5 | 0–2 | 高度梯度因子（影响折射） |
+| `waveSpeedX` | 0.3 | 0–1 | 水平漂移 |
+| `waveSpeedY` | 0.3 | 0–1 | 垂直漂移 |
+| `intensity` | 2.4 | 0–5 | 波幅 |
+| `frequency` | 6.0 | 1–15 | 波频率 |
+| `emboss` | 0.5 | 0–2 | 用于折射的高度梯度 |
 | `refraction` | 2.0 | 0–5 | UV 位移强度 |
-| `reflGain` | 700 | 0–2000 | 反射增益倍数 |
-| `reflCutoff` | 0.012 | 0–0.1 | 反射截止阈值 |
-| `reflIntensity` | 200000 | 0–500000 | 反射强度指数 |
-| `waterTint` | 0.92 | 0.5–1.5 | 水色调（越低越暗） |
+| `reflGain` | 700 | 0–2000 | 反射增益 |
+| `reflCutoff` | 0.012 | 0–0.1 | 反射截止 |
+| `reflIntensity` | 200000 | 0–500000 | 反射指数 |
+| `waterTint` | 0.92 | 0.5–1.5 | 水色（越低越暗） |
 
 ### 液态玻璃（`effect: 'glass'`）
 
 | 参数 | 默认值 | 范围 | 描述 |
 |------|--------|------|------|
-| `glassW` | 0 | 0 = 自动 | 玻璃区域宽度（像素） |
-| `glassH` | 0 | 0 = 自动 | 玻璃区域高度（像素） |
+| `glassW` | 0 | 0 = 自动 | 玻璃宽度（像素） |
+| `glassH` | 0 | 0 = 自动 | 玻璃高度（像素） |
 | `glassR` | 12 | 0–50 | 圆角半径（像素） |
-| `distortDepth` | 30 | 5–100 | 透镜畸变深度 |
+| `distortDepth` | 30 | 5–100 | 透镜深度 |
 | `distortStrength` | 0.15 | 0–0.5 | 畸变强度 |
-| `chromaShift` | 1.5 | 0–5 | 色差偏移（像素） |
+| `chromaShift` | 1.5 | 0–5 | 色差（像素） |
 | `glassTint` | 1.0 | 0.5–1.5 | 玻璃色调 |
 
-### 预设方案
+未知参数名和非有限数字会被忽略。
+
+### 预设
 
 | 预设 | waveSpeed | intensity | frequency | refraction | emboss | waterTint |
 |------|-----------|-----------|-----------|------------|--------|-----------|
@@ -124,94 +114,73 @@ AwesomeFluidWeb/
 | 水晶 | 0.15 | 1.0 | 8.0 | 1.5 | 0.4 | 1.0 |
 | 深海 | 0.08 | 3.0 | 3.0 | 2.5 | 0.6 | 0.8 |
 
-## 🔧 API
+## API
 
 ### `new FluidEngine(canvas, options)`
 
 | 选项 | 类型 | 默认值 | 描述 |
 |------|------|--------|------|
-| `effect` | `'water' \| 'glass'` | `'water'` | 效果类型 |
-| `params` | `object` | `{}` | 着色器参数（见上表） |
+| `effect` | `'water'` 或 `'glass'` | `'water'` | 绘制的效果。其他取值会使用水面 |
+| `params` | object | `{}` | 上表中的着色器参数 |
+| `interactive` | boolean | `true` | 在 canvas 上监听鼠标和触摸 |
+
+构造成功后 `engine.ready` 为 `true`。失败时 `engine.error` 是一段短说明。`engine.gl` 是 WebGL 上下文，失败时为 `null`。
+
+`engine.ripples` 是当前涟漪（`x`、`y`、`start`、`strength`）。`engine.fps` 大约每秒更新一次。
 
 ### `engine.addRipple(x, y, strength)`
 
-在指定像素坐标处添加涟漪。
+`x` 和 `y` 是相对 canvas 左上角的 CSS 像素。缺省或非有限的 `strength` 会变成 `1`，`0` 会保留。非有限坐标会被忽略。
 
-| 参数 | 描述 |
-|------|------|
-| `x`, `y` | 相对于 canvas 的像素坐标 |
-| `strength` | `0.3` = 轻微（鼠标移动），`1.0` = 中等，`1.5+` = 强烈（点击） |
+### `engine.setParam(name, value)` / `engine.getParam(name)`
 
-### `engine.setParam(name, value)`
+更新或读取一个参数，下一帧生效。
 
-实时更新着色器参数。
+### `engine.setEffect('water' | 'glass')`
+
+在对应着色器已编译时切换效果。非法名称不会改变当前效果。
 
 ### `engine.dispose()`
 
-释放 WebGL 资源并停止渲染循环。
+停止动画循环，移除监听器，并删除 WebGL 资源。`engine.destroy()` 是同一方法的别名。第二次调用不会做事。销毁之后不会再新增涟漪或修改参数。
 
-## 🏗️ 架构
+## 行为
 
 ```
-[程序化背景] → FBO 纹理 → [水面/玻璃着色器] → Canvas → [DOM 内容叠加层]
+[程序化背景] → 帧缓冲纹理 → [水面或玻璃着色器] → canvas
 ```
 
-1. **背景通道** — 将动画渐变色块渲染到离屏 FBO 纹理
-2. **效果通道** — 通过水面或玻璃着色器采样背景纹理
-3. **DOM 叠加层** — HTML 内容定位在 canvas 上方（设置 `pointer-events:none`）
+- 涟漪高度为 `sin(d * 0.06 - age * 8.0) * exp(-d * 0.003) * exp(-age * 0.7) * strength`。`d` 是设备像素距离，`age` 是秒。
+- 每个涟漪打包成一个 `vec4`（x、y、start、strength）再上传，以便留在常见的 WebGL1 uniform 上限之内。
+- 内置指针强度：鼠标移动超过 4 个 CSS 像素后为 `0.8 + min(distance / 30, 1.5)`，点击 `3.5`，触摸开始 `2.5`，触摸移动 `1.2`。触摸之后浏览器补发的 click 会被忽略。
+- `prefers-reduced-motion: reduce` 会停住环境波浪（以及玻璃晃动），交互涟漪仍然绘制。
+- `devicePixelRatio` 上限为 2；如果帧缓冲超过 `MAX_TEXTURE_SIZE`，会再把比例降下来。
+- 请给 canvas 设置 CSS 尺寸。如果没有，引擎会钉住当前布局尺寸，避免高分屏位图在下一次 resize 时把元素越撑越大。
 
-### 关键实现细节
+## 性能
 
-- **水面着色器** — 8 步 7 角度多方向波叠加，含折射、反射、光照
-- **涟漪公式** — `sin(d · 0.05 - age · 8) · exp(-d · 0.005) · exp(-age · 0.9) · strength`
-- **液态玻璃** — SDF 圆角矩形 + 透镜畸变 + RGB 通道分离
-- **WebGL1** — 最大浏览器兼容性，无需 WebGL2
-- **devicePixelRatio** — 自动处理，上限 2x 保证性能
+- 演示页有一个水面引擎和两个玻璃引擎。额外的水面引擎各自占用一张全尺寸帧缓冲。
+- 玻璃效果更轻，没有波浪循环。
+- 叠加层需要 `pointer-events: none`。
+- 在很慢的 GPU 上可以降低水面着色器里的 `STEPS` 和 `ANGLE`。
 
-## 🖱️ 交互方式
+## 浏览器
 
-| 操作 | 效果 |
-|------|------|
-| 鼠标在 canvas 上移动 | 产生小涟漪拖尾 + 光晕跟随 |
-| 点击 / 触摸 canvas | 产生强烈大波纹扩散 |
-| 鼠标位置 | 水面着色器中产生可见光晕 |
-| 参数控制面板（演示页） | 滑块实时调节所有参数 |
+需要 WebGL1。当前的 Chrome、Edge、Firefox、Safari、移动端 Safari 和 Android 版 Chrome 都可以。WebGL 无法启动时，演示页会显示错误，而不是抛出未捕获异常。
 
-## 📦 模板文件
+## 开发
 
-| 模板 | 描述 | 适用场景 |
-|------|------|----------|
-| `fluid-terminal.html` | 终端窗口水面效果 | 开发者作品集、技术演示 |
-| `fluid-glass.html` | 液态玻璃卡片畸变 | 产品卡片、特性展示 |
-| `fluid-minimal.html` | 最小集成代码 | 学习、快速上手 |
-| `fluid-fullscreen.html` | 全屏水面背景 | 着陆页、首屏区域 |
-| `fluid-showcase.html` | 完整功能演示 | 完整参考 |
+```bash
+npm test
+```
 
-## ⚡ 性能优化建议
+需要 Node.js 18 或更新版本，没有依赖。CI 在 Node 20 和 22 上运行同一条命令。
 
-- 限制 canvas 分辨率（引擎自动将 `devicePixelRatio` 上限设为 2x）
-- 在低端设备上减少水面着色器中的 `STEPS` 和 `ANGLE` 常量
-- 使用 `effect: 'glass'` 降低 GPU 负载（无波模拟循环）
-- 避免在同一页面创建多个水面效果引擎
-- 在叠加内容上设置 `pointer-events: none`，确保鼠标事件到达 canvas
+## 许可证
 
-## 🌐 浏览器支持
+[MIT](LICENSE)
 
-| 浏览器 | 支持 |
-|--------|------|
-| Chrome / Edge | ✅ 完全支持 |
-| Firefox | ✅ 完全支持 |
-| Safari | ✅ 完全支持 |
-| 移动端 Safari | ✅ 完全支持（触摸涟漪） |
-| Chrome 安卓 | ✅ 完全支持 |
+## 致谢
 
-需要 WebGL1 支持（99%+ 浏览器已支持）。
-
-## 📄 开源协议
-
-[MIT](LICENSE) — 个人和商业项目均可免费使用。
-
-## 🙏 致谢
-
-- 原始着色器来自 [liquid-terminal-config-shojiwm](https://github.com/bea4dev/liquid-terminal-config-shojiwm)，作者 [@bea4dev](https://github.com/bea4dev)
-- 灵感来源于 [ShojiWM](https://github.com/bea4dev/ShojiWM) Wayland 合成器项目
+- 着色器改编自 [liquid-terminal-config-shojiwm](https://github.com/bea4dev/liquid-terminal-config-shojiwm)，作者 [@bea4dev](https://github.com/bea4dev)
+- 灵感来自 [ShojiWM](https://github.com/bea4dev/ShojiWM)
