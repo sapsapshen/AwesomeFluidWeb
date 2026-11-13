@@ -1,23 +1,26 @@
 /**
- * FluidEngine — WebGL Liquid Terminal Effect Engine
- * Ported from bea4dev/liquid-terminal-config-shojiwm GLSL shaders
+ * FluidEngine — WebGL1 water surface and liquid glass.
  *
- * Usage:
- *   var engine = new FluidEngine(canvas, { effect: 'water', params: {...} });
- *   engine.addRipple(x, y, strength);
- *   engine.setParam('waveSpeed', 0.3);
+ *   var engine = new FluidEngine(canvas, { effect: 'water', params: { intensity: 2.4 } });
+ *   engine.addRipple(x, y, strength); // CSS pixels, origin at the top-left
+ *   engine.dispose();
  *
- * Effects: 'water' (water surface with waves + ripples), 'glass' (liquid glass distortion)
- *
- * IMPORTANT: For mouse interaction to work, ensure the canvas is not covered by
- * elements with pointer-events:auto. Set pointer-events:none on overlay content.
+ * Overlay elements must use pointer-events: none so the canvas receives the pointer.
  */
-(function(global){
+(function (root) {
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════
-//  SHADER SOURCES
-// ═══════════════════════════════════════════════════════════════════════
+var MAX_RIPPLES = 20;
+var RIPPLE_LIFETIME = 5;
+var MAX_DPR = 2;
+
+var FRAG_PRECISION = [
+'#ifdef GL_FRAGMENT_PRECISION_HIGH',
+'precision highp float;',
+'#else',
+'precision mediump float;',
+'#endif'
+].join('\n');
 
 var VERT_SRC = [
 'attribute vec2 a_position;',
@@ -29,7 +32,7 @@ var VERT_SRC = [
 ].join('\n');
 
 var BG_FRAG = [
-'precision highp float;',
+FRAG_PRECISION,
 'varying vec2 v_uv;',
 'uniform float u_time;',
 'uniform vec2 u_resolution;',
@@ -76,7 +79,7 @@ var BG_FRAG = [
 ].join('\n');
 
 var WATER_FRAG = [
-'precision highp float;',
+FRAG_PRECISION,
 'varying vec2 v_uv;',
 'uniform float u_time;',
 'uniform float u_waveSpeed;',
@@ -93,9 +96,7 @@ var WATER_FRAG = [
 'uniform vec2 u_resolution;',
 'uniform sampler2D u_texture;',
 'uniform int u_rippleCount;',
-'uniform vec2 u_ripplePos[20];',
-'uniform float u_rippleStart[20];',
-'uniform float u_rippleStrength[20];',
+'uniform vec4 u_ripples[20];',
 'uniform vec2 u_mousePos;',
 'uniform float u_mouseInside;',
 '',
@@ -121,11 +122,12 @@ var WATER_FRAG = [
 '  float h = 0.0;',
 '  for(int i = 0; i < MAX_RIPPLES; i++){',
 '    if(i >= u_rippleCount) break;',
-'    float d = distance(px, u_ripplePos[i]);',
-'    float age = t - u_rippleStart[i];',
+'    vec4 rp = u_ripples[i];',
+'    float age = t - rp.z;',
 '    if(age > 0.0 && age < 5.0){',
+'      float d = distance(px, rp.xy);',
 '      float w = sin(d * 0.06 - age * 8.0) * exp(-d * 0.003) * exp(-age * 0.7);',
-'      h += w * u_rippleStrength[i];',
+'      h += w * rp.w;',
 '    }',
 '  }',
 '  return h;',
@@ -139,7 +141,6 @@ var WATER_FRAG = [
 '',
 '  float wc = water_height(uv, t);',
 '  float rc = ripple_height(px, u_time);',
-'  float center = wc + rc * 0.6;',
 '',
 '  vec2 sd = 1.0 / sz;',
 '',
@@ -186,7 +187,7 @@ var WATER_FRAG = [
 ].join('\n');
 
 var GLASS_FRAG = [
-'precision highp float;',
+FRAG_PRECISION,
 'varying vec2 v_uv;',
 'uniform vec2 u_resolution;',
 'uniform sampler2D u_texture;',
@@ -264,65 +265,7 @@ var GLASS_FRAG = [
 '}'
 ].join('\n');
 
-// ═══════════════════════════════════════════════════════════════════════
-//  WEBGL UTILITIES
-// ═══════════════════════════════════════════════════════════════════════
-
-function createShader(gl, type, src){
-  var s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
-    console.error('Shader compile error:', gl.getShaderInfoLog(s));
-    return null;
-  }
-  return s;
-}
-
-function createProgram(gl, vsSrc, fsSrc){
-  var vs = createShader(gl, gl.VERTEX_SHADER, vsSrc);
-  var fs = createShader(gl, gl.FRAGMENT_SHADER, fsSrc);
-  if(!vs || !fs) return null;
-  var p = gl.createProgram();
-  gl.attachShader(p, vs);
-  gl.attachShader(p, fs);
-  gl.linkProgram(p);
-  if(!gl.getProgramParameter(p, gl.LINK_STATUS)){
-    console.error('Program link error:', gl.getProgramInfoLog(p));
-    return null;
-  }
-  gl.deleteShader(vs);
-  gl.deleteShader(fs);
-  return p;
-}
-
-function createTexture(gl, w, h){
-  var tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  return tex;
-}
-
-function createFBO(gl, tex){
-  var fb = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  return fb;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//  FLUID ENGINE
-// ═══════════════════════════════════════════════════════════════════════
-
-var MAX_RIPPLES = 20;
-
 var DEFAULT_PARAMS = {
-  // Water surface
   waveSpeed: 0.2,
   waveSpeedX: 0.3,
   waveSpeedY: 0.3,
@@ -334,7 +277,6 @@ var DEFAULT_PARAMS = {
   reflCutoff: 0.012,
   reflIntensity: 200000.0,
   waterTint: 0.92,
-  // Liquid glass
   glassW: 0,
   glassH: 0,
   glassR: 12,
@@ -344,243 +286,463 @@ var DEFAULT_PARAMS = {
   glassTint: 1.0
 };
 
-function FluidEngine(canvas, opts){
-  opts = opts || {};
-  this.canvas = canvas;
-  this.gl = canvas.getContext('webgl', {premultipliedAlpha:false, antialias:true, alpha:true})
-         || canvas.getContext('experimental-webgl', {premultipliedAlpha:false, antialias:true, alpha:true});
-  if(!this.gl){ console.error('WebGL not supported'); return; }
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
 
+function mergeParams(overrides) {
+  var params = {};
+  var key;
+  for (key in DEFAULT_PARAMS) {
+    if (hasOwn(DEFAULT_PARAMS, key)) params[key] = DEFAULT_PARAMS[key];
+  }
+  if (!overrides) return params;
+  for (key in overrides) {
+    if (!hasOwn(overrides, key) || !hasOwn(params, key)) continue;
+    if (typeof overrides[key] !== 'number' || !isFinite(overrides[key])) continue;
+    params[key] = overrides[key];
+  }
+  return params;
+}
+
+function normalizeStrength(strength) {
+  if (typeof strength !== 'number' || !isFinite(strength)) return 1;
+  return strength;
+}
+
+function createShader(gl, type, src) {
+  var shader = gl.createShader(type);
+  if (!shader) return null;
+  gl.shaderSource(shader, src);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+function createProgram(gl, vsSrc, fsSrc) {
+  var vs = createShader(gl, gl.VERTEX_SHADER, vsSrc);
+  var fs = createShader(gl, gl.FRAGMENT_SHADER, fsSrc);
+  if (!vs || !fs) {
+    if (vs) gl.deleteShader(vs);
+    if (fs) gl.deleteShader(fs);
+    return null;
+  }
+  var program = gl.createProgram();
+  if (!program) {
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    return null;
+  }
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  gl.deleteShader(vs);
+  gl.deleteShader(fs);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error('Program link error:', gl.getProgramInfoLog(program));
+    gl.deleteProgram(program);
+    return null;
+  }
+  return program;
+}
+
+function createTexture(gl, w, h) {
+  var tex = gl.createTexture();
+  if (!tex) return null;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+function createFBO(gl, tex) {
+  var fb = gl.createFramebuffer();
+  if (!fb) return null;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return fb;
+}
+
+function locations(gl, program, names) {
+  var out = { _position: gl.getAttribLocation(program, 'a_position') };
+  for (var i = 0; i < names.length; i++) {
+    out[names[i]] = gl.getUniformLocation(program, names[i]);
+  }
+  return out;
+}
+
+function bindQuad(gl, buffer, attrib) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  if (attrib < 0) return;
+  gl.enableVertexAttribArray(attrib);
+  gl.vertexAttribPointer(attrib, 2, gl.FLOAT, false, 0, 0);
+}
+
+function FluidEngine(canvas, opts) {
+  opts = opts || {};
+  this.canvas = canvas || null;
+  this.params = mergeParams(opts.params);
+  this.effect = opts.effect === 'glass' ? 'glass' : 'water';
+  this.interactive = opts.interactive !== false;
+  this.ripples = [];
+  this.mouseCssX = 0;
+  this.mouseCssY = 0;
+  this.lastMouseX = -1;
+  this.lastMouseY = -1;
+  this.mouseInside = false;
+  this.fps = 0;
+  this.error = null;
+  this.ready = false;
+  this.gl = null;
+  this._destroyed = false;
+  this._contextLost = false;
+  this._listening = false;
+  this._resourcesReady = false;
+  this._frame = null;
+  this._frameCount = 0;
+  this._lastFpsTime = 0;
+  this._suppressClickUntil = 0;
+  this._reduceMotion = false;
+  this.dpr = 1;
+  this.cssWidth = 0;
+  this.cssHeight = 0;
+  this.width = 0;
+  this.height = 0;
+
+  if (!canvas || typeof canvas.getContext !== 'function') {
+    this._fail('A canvas element is required');
+    return;
+  }
+
+  var attrs = {
+    alpha: true,
+    antialias: true,
+    depth: false,
+    stencil: false,
+    premultipliedAlpha: false
+  };
+  this.gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+  if (!this.gl) {
+    this._fail('WebGL is not supported');
+    return;
+  }
+
+  this._bindContextEvents();
+  this._bindMotionPreference();
+  if (!this._initResources()) return;
+  if (this.interactive) this._setupInteraction();
+  this._listenResize();
+  this._resize();
+  this._loopBound = this._loop.bind(this);
+  this._scheduleNext();
+}
+
+FluidEngine.prototype._fail = function (message) {
+  this.error = message;
+  this.ready = false;
+  console.error(message);
+};
+
+FluidEngine.prototype._now = function () {
+  return performance.now() / 1000;
+};
+
+FluidEngine.prototype._devicePoint = function (x, y) {
+  var scale = this.dpr > 0 ? this.dpr : 1;
+  var height = this.cssHeight > 0 ? this.cssHeight : 0;
+  return {
+    x: x * scale,
+    y: (height - y) * scale
+  };
+};
+
+FluidEngine.prototype._bindMotionPreference = function () {
+  if (typeof root.matchMedia !== 'function') return;
+  var mq = root.matchMedia('(prefers-reduced-motion: reduce)');
+  var self = this;
+  this._reduceMotionMq = mq;
+  this._reduceMotion = !!mq.matches;
+  this._onReduceMotion = function () {
+    self._reduceMotion = !!mq.matches;
+  };
+  if (typeof mq.addEventListener === 'function') mq.addEventListener('change', this._onReduceMotion);
+  else if (typeof mq.addListener === 'function') mq.addListener(this._onReduceMotion);
+};
+
+FluidEngine.prototype._bindContextEvents = function () {
+  var self = this;
+  this._onContextLost = function (event) {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    self._contextLost = true;
+    self.ready = false;
+    self.bgTexture = null;
+    self.bgFBO = null;
+    self.buffer = null;
+    self.bgProgram = null;
+    self.waterProgram = null;
+    self.glassProgram = null;
+  };
+  this._onContextRestored = function () {
+    if (self._destroyed) return;
+    self._contextLost = false;
+    if (!self._initResources()) return;
+    self._resize();
+  };
+  this.canvas.addEventListener('webglcontextlost', this._onContextLost);
+  this.canvas.addEventListener('webglcontextrestored', this._onContextRestored);
+};
+
+FluidEngine.prototype._deleteGLResources = function () {
   var gl = this.gl;
+  if (!gl || this._contextLost) {
+    this.bgTexture = null;
+    this.bgFBO = null;
+    this.buffer = null;
+    this.bgProgram = null;
+    this.waterProgram = null;
+    this.glassProgram = null;
+    return;
+  }
+  if (this.bgTexture) gl.deleteTexture(this.bgTexture);
+  if (this.bgFBO) gl.deleteFramebuffer(this.bgFBO);
+  if (this.buffer) gl.deleteBuffer(this.buffer);
+  if (this.bgProgram) gl.deleteProgram(this.bgProgram);
+  if (this.waterProgram) gl.deleteProgram(this.waterProgram);
+  if (this.glassProgram) gl.deleteProgram(this.glassProgram);
+  this.bgTexture = null;
+  this.bgFBO = null;
+  this.buffer = null;
+  this.bgProgram = null;
+  this.waterProgram = null;
+  this.glassProgram = null;
+};
+
+FluidEngine.prototype._initResources = function () {
+  var gl = this.gl;
+  if (!gl || this._contextLost) return false;
+  this._deleteGLResources();
+
   this.bgProgram = createProgram(gl, VERT_SRC, BG_FRAG);
   this.waterProgram = createProgram(gl, VERT_SRC, WATER_FRAG);
   this.glassProgram = createProgram(gl, VERT_SRC, GLASS_FRAG);
 
+  var activeOk = this.effect === 'glass' ? this.glassProgram : this.waterProgram;
+  if (!this.bgProgram || !activeOk) {
+    this._resourcesReady = false;
+    this.ready = false;
+    this._fail(!this.bgProgram
+      ? 'Failed to compile the background shader'
+      : (this.effect === 'glass'
+        ? 'Failed to compile the glass shader'
+        : 'Failed to compile the water shader'));
+    this._deleteGLResources();
+    return false;
+  }
+  if (!this.waterProgram) console.error('Failed to compile the water shader');
+  if (!this.glassProgram) console.error('Failed to compile the glass shader');
+
   this.buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+    gl.STATIC_DRAW
+  );
+  this._cacheLocations();
+  this._resourcesReady = true;
+  this.ready = true;
+  this.error = null;
+  return true;
+};
 
-  this.params = {};
-  for(var k in DEFAULT_PARAMS) this.params[k] = DEFAULT_PARAMS[k];
-  if(opts.params){
-    for(var k2 in opts.params){
-      if(this.params.hasOwnProperty(k2)) this.params[k2] = opts.params[k2];
+FluidEngine.prototype._cacheLocations = function () {
+  var gl = this.gl;
+  this._bgLoc = locations(gl, this.bgProgram, ['u_time', 'u_resolution']);
+  this._waterLoc = this.waterProgram ? locations(gl, this.waterProgram, [
+    'u_time', 'u_resolution', 'u_waveSpeed', 'u_waveSpeedX', 'u_waveSpeedY',
+    'u_emboss', 'u_intensity', 'u_frequency', 'u_refraction', 'u_reflGain',
+    'u_reflCutoff', 'u_reflIntensity', 'u_waterTint', 'u_texture',
+    'u_rippleCount', 'u_mousePos', 'u_mouseInside'
+  ]) : null;
+  this._rippleLocs = [];
+  if (this.waterProgram) {
+    for (var i = 0; i < MAX_RIPPLES; i++) {
+      this._rippleLocs.push(gl.getUniformLocation(this.waterProgram, 'u_ripples[' + i + ']'));
     }
   }
+  this._glassLoc = this.glassProgram ? locations(gl, this.glassProgram, [
+    'u_resolution', 'u_texture', 'u_glassW', 'u_glassH', 'u_glassR',
+    'u_distortDepth', 'u_distortStrength', 'u_chromaShift', 'u_glassTint',
+    'u_mousePos', 'u_mouseInside', 'u_time'
+  ]) : null;
+};
 
-  // FIX: no rippleStartTime offset — use absolute time
-  this.ripples = [];
-  this.effect = opts.effect || 'water';
-  this.mouseInside = false;
-  this.mouseX = 0;
-  this.mouseY = 0;
-  this.lastMouseX = -1;
-  this.lastMouseY = -1;
-  this._destroyed = false;
+FluidEngine.prototype._listenResize = function () {
+  var self = this;
+  this._resizeBound = function () { self._resize(); };
+  if (typeof root.ResizeObserver === 'function') {
+    this._resizeObserver = new root.ResizeObserver(this._resizeBound);
+    this._resizeObserver.observe(this.canvas);
+    return;
+  }
+  if (typeof root.addEventListener === 'function') {
+    this._usingWindowResize = true;
+    root.addEventListener('resize', this._resizeBound);
+  }
+};
 
-  this._setupInteraction();
-  this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-  this._resize();
-  this._resizeBound = this._resize.bind(this);
-  window.addEventListener('resize', this._resizeBound);
-
-  this._loopBound = this._loop.bind(this);
-  requestAnimationFrame(this._loopBound);
-
-  this._frameCount = 0;
-  this._lastFpsTime = performance.now();
-  this.fps = 0;
-}
-
-FluidEngine.prototype._resize = function(){
+FluidEngine.prototype._resize = function () {
+  if (this._destroyed || !this.gl || this._contextLost) return;
   var rect = this.canvas.getBoundingClientRect();
-  var w = Math.max(1, Math.floor(rect.width * this.dpr));
-  var h = Math.max(1, Math.floor(rect.height * this.dpr));
+  var maxTex = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) || 4096;
+  var dpr = Math.min(root.devicePixelRatio || 1, MAX_DPR);
+  var cssW = rect.width > 0 ? rect.width : 1;
+  var cssH = rect.height > 0 ? rect.height : 1;
+  var w = Math.max(1, Math.floor(cssW * dpr));
+  var h = Math.max(1, Math.floor(cssH * dpr));
+  if (w > maxTex || h > maxTex) {
+    dpr *= Math.min(maxTex / w, maxTex / h);
+    w = Math.max(1, Math.min(maxTex, Math.floor(cssW * dpr)));
+    h = Math.max(1, Math.min(maxTex, Math.floor(cssH * dpr)));
+  }
+  if (this.bgTexture && w === this.width && h === this.height && dpr === this.dpr) return;
+
+  this.dpr = dpr;
+  this.cssWidth = cssW;
+  this.cssHeight = cssH;
   this.canvas.width = w;
   this.canvas.height = h;
   this.width = w;
   this.height = h;
-  var gl = this.gl;
-  if(this.bgTexture) gl.deleteTexture(this.bgTexture);
-  if(this.bgFBO) gl.deleteFramebuffer(this.bgFBO);
-  this.bgTexture = createTexture(gl, w, h);
-  this.bgFBO = createFBO(gl, this.bgTexture);
-};
-
-FluidEngine.prototype._setupInteraction = function(){
-  var self = this;
-  function getPos(e){
-    var rect = self.canvas.getBoundingClientRect();
-    var x, y;
-    if(e.touches && e.touches.length > 0){
-      x = e.touches[0].clientX - rect.left;
-      y = e.touches[0].clientY - rect.top;
-    } else {
-      x = e.clientX - rect.left;
-      y = e.clientY - rect.top;
+  // A canvas with no CSS size uses its bitmap as its layout size. Changing the
+  // bitmap would then change the next measurement and grow without bound.
+  if (rect.width > 0 && rect.height > 0) {
+    var laidOut = this.canvas.getBoundingClientRect();
+    if (Math.abs(laidOut.width - rect.width) > 0.5 || Math.abs(laidOut.height - rect.height) > 0.5) {
+      this.canvas.style.width = rect.width + 'px';
+      this.canvas.style.height = rect.height + 'px';
     }
-    return { x: x * self.dpr, y: y * self.dpr };
   }
 
-  this._mousemove = function(e){
-    var p = getPos(e);
-    self.mouseX = p.x;
-    self.mouseY = p.y;
+  var gl = this.gl;
+  if (this.bgTexture) gl.deleteTexture(this.bgTexture);
+  if (this.bgFBO) gl.deleteFramebuffer(this.bgFBO);
+  this.bgTexture = createTexture(gl, w, h);
+  this.bgFBO = this.bgTexture ? createFBO(gl, this.bgTexture) : null;
+  if (!this.bgFBO) {
+    this._fail('Failed to create the framebuffer');
+    return;
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.bgFBO);
+  var complete = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  if (!complete) {
+    this._fail('Failed to create the framebuffer');
+    return;
+  }
+  if (this._resourcesReady) {
+    this.ready = true;
+    this.error = null;
+  }
+};
+
+FluidEngine.prototype._cssPos = function (event) {
+  var point = event;
+  if (event.touches && event.touches.length > 0) point = event.touches[0];
+  if (!point || typeof point.clientX !== 'number' || typeof point.clientY !== 'number') return null;
+  var rect = this.canvas.getBoundingClientRect();
+  return {
+    x: point.clientX - rect.left,
+    y: point.clientY - rect.top
+  };
+};
+
+FluidEngine.prototype._markTouch = function () {
+  this._suppressClickUntil = performance.now() + 800;
+};
+
+FluidEngine.prototype._isGhostMouse = function () {
+  return performance.now() < this._suppressClickUntil;
+};
+
+FluidEngine.prototype._setupInteraction = function () {
+  var self = this;
+
+  this._mousemove = function (event) {
+    if (self._isGhostMouse()) return;
+    var p = self._cssPos(event);
+    if (!p) return;
+    self.mouseCssX = p.x;
+    self.mouseCssY = p.y;
     self.mouseInside = true;
-    if(self.lastMouseX >= 0){
+    if (self.lastMouseX >= 0) {
       var dist = Math.hypot(p.x - self.lastMouseX, p.y - self.lastMouseY);
-      if(dist > 4) self.addRipple(p.x, p.y, 0.8 + Math.min(dist / 30, 1.5));
+      if (dist > 4) self.addRipple(p.x, p.y, 0.8 + Math.min(dist / 30, 1.5));
     }
     self.lastMouseX = p.x;
     self.lastMouseY = p.y;
   };
-  this._mouseenter = function(){ self.mouseInside = true; };
-  this._mouseleave = function(){ self.mouseInside = false; self.lastMouseX = -1; self.lastMouseY = -1; };
-  this._click = function(e){ var p = getPos(e); self.addRipple(p.x, p.y, 3.5); };
-  this._touchmove = function(e){ e.preventDefault(); var p = getPos(e); self.mouseX = p.x; self.mouseY = p.y; self.mouseInside = true; self.addRipple(p.x, p.y, 1.2); };
-  this._touchstart = function(e){ var p = getPos(e); self.mouseX = p.x; self.mouseY = p.y; self.mouseInside = true; self.addRipple(p.x, p.y, 2.5); };
-  this._touchend = function(){ self.mouseInside = false; };
+  this._mouseenter = function () {
+    if (self._isGhostMouse()) return;
+    self.mouseInside = true;
+  };
+  this._mouseleave = function () {
+    self.mouseInside = false;
+    self.lastMouseX = -1;
+    self.lastMouseY = -1;
+  };
+  this._click = function (event) {
+    if (self._isGhostMouse()) return;
+    var p = self._cssPos(event);
+    if (!p) return;
+    self.addRipple(p.x, p.y, 3.5);
+  };
+  this._touchmove = function (event) {
+    self._markTouch();
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    var p = self._cssPos(event);
+    if (!p) return;
+    self.mouseCssX = p.x;
+    self.mouseCssY = p.y;
+    self.mouseInside = true;
+    self.addRipple(p.x, p.y, 1.2);
+  };
+  this._touchstart = function (event) {
+    self._markTouch();
+    var p = self._cssPos(event);
+    if (!p) return;
+    self.mouseCssX = p.x;
+    self.mouseCssY = p.y;
+    self.mouseInside = true;
+    self.addRipple(p.x, p.y, 2.5);
+  };
+  this._touchend = function () {
+    self._markTouch();
+    self.mouseInside = false;
+    self.lastMouseX = -1;
+    self.lastMouseY = -1;
+  };
 
   this.canvas.addEventListener('mousemove', this._mousemove);
   this.canvas.addEventListener('mouseenter', this._mouseenter);
   this.canvas.addEventListener('mouseleave', this._mouseleave);
   this.canvas.addEventListener('click', this._click);
-  this.canvas.addEventListener('touchmove', this._touchmove, {passive:false});
+  this.canvas.addEventListener('touchmove', this._touchmove, { passive: false });
   this.canvas.addEventListener('touchstart', this._touchstart);
   this.canvas.addEventListener('touchend', this._touchend);
+  this._listening = true;
 };
 
-// FIX: absolute time — no offset
-FluidEngine.prototype.addRipple = function(x, y, strength){
-  if(this.ripples.length >= MAX_RIPPLES) this.ripples.shift();
-  this.ripples.push({ x: x, y: y, start: performance.now() / 1000, strength: strength || 1.0 });
-  var now = performance.now() / 1000;
-  this.ripples = this.ripples.filter(function(r){ return now - r.start < 5.0; });
-};
-
-FluidEngine.prototype._renderBackground = function(time){
-  var gl = this.gl, prog = this.bgProgram;
-  gl.bindFramebuffer(gl.FRAMEBUFFER, this.bgFBO);
-  gl.viewport(0, 0, this.width, this.height);
-  gl.clearColor(0, 0, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.useProgram(prog);
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-  var posLoc = gl.getAttribLocation(prog, 'a_position');
-  gl.enableVertexAttribArray(posLoc);
-  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_time'), time);
-  gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), this.width, this.height);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-};
-
-FluidEngine.prototype._renderWater = function(time){
-  var gl = this.gl, prog = this.waterProgram, p = this.params;
-  gl.viewport(0, 0, this.width, this.height);
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.useProgram(prog);
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-  var posLoc = gl.getAttribLocation(prog, 'a_position');
-  gl.enableVertexAttribArray(posLoc);
-  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.bgTexture);
-  gl.uniform1i(gl.getUniformLocation(prog, 'u_texture'), 0);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_time'), time);
-  gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), this.width, this.height);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_waveSpeed'), p.waveSpeed);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_waveSpeedX'), p.waveSpeedX);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_waveSpeedY'), p.waveSpeedY);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_emboss'), p.emboss);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_intensity'), p.intensity);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_frequency'), p.frequency);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_refraction'), p.refraction);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_reflGain'), p.reflGain);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_reflCutoff'), p.reflCutoff);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_reflIntensity'), p.reflIntensity);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_waterTint'), p.waterTint);
-  gl.uniform2f(gl.getUniformLocation(prog, 'u_mousePos'), this.mouseX, this.mouseY);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_mouseInside'), this.mouseInside ? 1.0 : 0.0);
-
-  var rc = Math.min(this.ripples.length, MAX_RIPPLES);
-  gl.uniform1i(gl.getUniformLocation(prog, 'u_rippleCount'), rc);
-  for(var i = 0; i < rc; i++){
-    var r = this.ripples[i];
-    gl.uniform2f(gl.getUniformLocation(prog, 'u_ripplePos[' + i + ']'), r.x, r.y);
-    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStart[' + i + ']'), r.start);
-    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStrength[' + i + ']'), r.strength);
-  }
-  for(var j = rc; j < MAX_RIPPLES; j++){
-    gl.uniform2f(gl.getUniformLocation(prog, 'u_ripplePos[' + j + ']'), 0, 0);
-    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStart[' + j + ']'), -100);
-    gl.uniform1f(gl.getUniformLocation(prog, 'u_rippleStrength[' + j + ']'), 0);
-  }
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-};
-
-FluidEngine.prototype._renderGlass = function(time){
-  var gl = this.gl, prog = this.glassProgram, p = this.params;
-  gl.viewport(0, 0, this.width, this.height);
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.useProgram(prog);
-  gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-  var posLoc = gl.getAttribLocation(prog, 'a_position');
-  gl.enableVertexAttribArray(posLoc);
-  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.bgTexture);
-  gl.uniform1i(gl.getUniformLocation(prog, 'u_texture'), 0);
-  gl.uniform2f(gl.getUniformLocation(prog, 'u_resolution'), this.width, this.height);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassW'), p.glassW);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassH'), p.glassH);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassR'), p.glassR);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_distortDepth'), p.distortDepth);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_distortStrength'), p.distortStrength);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_chromaShift'), p.chromaShift);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_glassTint'), p.glassTint);
-  gl.uniform2f(gl.getUniformLocation(prog, 'u_mousePos'), this.mouseX, this.mouseY);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_mouseInside'), this.mouseInside ? 1.0 : 0.0);
-  gl.uniform1f(gl.getUniformLocation(prog, 'u_time'), time);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-};
-
-// FIX: absolute time — no startTime, no rippleStartTime
-FluidEngine.prototype._loop = function(){
-  if(this._destroyed) return;
-  var time = performance.now() / 1000;
-  this._renderBackground(time);
-  if(this.effect === 'water') this._renderWater(time);
-  else if(this.effect === 'glass') this._renderGlass(time);
-
-  this._frameCount++;
-  var now = performance.now();
-  if(now - this._lastFpsTime >= 1000){
-    this.fps = Math.round(this._frameCount * 1000 / (now - this._lastFpsTime));
-    this._frameCount = 0;
-    this._lastFpsTime = now;
-  }
-
-  requestAnimationFrame(this._loopBound);
-};
-
-FluidEngine.prototype.setParam = function(name, value){
-  if(this.params.hasOwnProperty(name)) this.params[name] = value;
-};
-
-FluidEngine.prototype.getParam = function(name){
-  return this.params[name];
-};
-
-FluidEngine.prototype.setEffect = function(effect){
-  this.effect = effect;
-};
-
-FluidEngine.prototype.destroy = function(){
-  this._destroyed = true;
-  window.removeEventListener('resize', this._resizeBound);
+FluidEngine.prototype._removeInteraction = function () {
+  if (!this.canvas || !this._listening) return;
   this.canvas.removeEventListener('mousemove', this._mousemove);
   this.canvas.removeEventListener('mouseenter', this._mouseenter);
   this.canvas.removeEventListener('mouseleave', this._mouseleave);
@@ -588,19 +750,212 @@ FluidEngine.prototype.destroy = function(){
   this.canvas.removeEventListener('touchmove', this._touchmove);
   this.canvas.removeEventListener('touchstart', this._touchstart);
   this.canvas.removeEventListener('touchend', this._touchend);
+  this._listening = false;
+};
+
+FluidEngine.prototype.addRipple = function (x, y, strength) {
+  if (this._destroyed) return;
+  if (typeof x !== 'number' || typeof y !== 'number' || !isFinite(x) || !isFinite(y)) return;
+  var now = this._now();
+  var kept = [];
+  for (var i = 0; i < this.ripples.length; i++) {
+    if (now - this.ripples[i].start < RIPPLE_LIFETIME) kept.push(this.ripples[i]);
+  }
+  kept.push({
+    x: x,
+    y: y,
+    start: now,
+    strength: normalizeStrength(strength)
+  });
+  if (kept.length > MAX_RIPPLES) kept = kept.slice(kept.length - MAX_RIPPLES);
+  this.ripples = kept;
+};
+
+FluidEngine.prototype._pruneRipples = function (now) {
+  var next = [];
+  for (var i = 0; i < this.ripples.length; i++) {
+    if (now - this.ripples[i].start < RIPPLE_LIFETIME) next.push(this.ripples[i]);
+  }
+  this.ripples = next.length === this.ripples.length ? this.ripples : next;
+};
+
+FluidEngine.prototype._renderBackground = function (time) {
   var gl = this.gl;
-  if(gl){
-    if(this.bgTexture) gl.deleteTexture(this.bgTexture);
-    if(this.bgFBO) gl.deleteFramebuffer(this.bgFBO);
-    if(this.buffer) gl.deleteBuffer(this.buffer);
-    if(this.bgProgram) gl.deleteProgram(this.bgProgram);
-    if(this.waterProgram) gl.deleteProgram(this.waterProgram);
-    if(this.glassProgram) gl.deleteProgram(this.glassProgram);
+  var loc = this._bgLoc;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, this.bgFBO);
+  gl.viewport(0, 0, this.width, this.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(this.bgProgram);
+  bindQuad(gl, this.buffer, loc._position);
+  gl.uniform1f(loc.u_time, time);
+  gl.uniform2f(loc.u_resolution, this.width, this.height);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+};
+
+FluidEngine.prototype._uploadPointer = function (gl, loc) {
+  var pointer = this._devicePoint(this.mouseCssX, this.mouseCssY);
+  gl.uniform2f(loc.u_mousePos, pointer.x, pointer.y);
+  gl.uniform1f(loc.u_mouseInside, this.mouseInside ? 1 : 0);
+};
+
+FluidEngine.prototype._renderWater = function (time) {
+  var gl = this.gl;
+  var loc = this._waterLoc;
+  var params = this.params;
+  if (!loc) return;
+  var waveScale = this._reduceMotion ? 0 : 1;
+
+  gl.viewport(0, 0, this.width, this.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(this.waterProgram);
+  bindQuad(gl, this.buffer, loc._position);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, this.bgTexture);
+  gl.uniform1i(loc.u_texture, 0);
+  gl.uniform1f(loc.u_time, time);
+  gl.uniform2f(loc.u_resolution, this.width, this.height);
+  gl.uniform1f(loc.u_waveSpeed, params.waveSpeed * waveScale);
+  gl.uniform1f(loc.u_waveSpeedX, params.waveSpeedX * waveScale);
+  gl.uniform1f(loc.u_waveSpeedY, params.waveSpeedY * waveScale);
+  gl.uniform1f(loc.u_emboss, params.emboss);
+  gl.uniform1f(loc.u_intensity, params.intensity);
+  gl.uniform1f(loc.u_frequency, params.frequency);
+  gl.uniform1f(loc.u_refraction, params.refraction);
+  gl.uniform1f(loc.u_reflGain, params.reflGain);
+  gl.uniform1f(loc.u_reflCutoff, params.reflCutoff);
+  gl.uniform1f(loc.u_reflIntensity, params.reflIntensity);
+  gl.uniform1f(loc.u_waterTint, params.waterTint);
+  this._uploadPointer(gl, loc);
+
+  var count = Math.min(this.ripples.length, MAX_RIPPLES);
+  gl.uniform1i(loc.u_rippleCount, count);
+  for (var i = 0; i < MAX_RIPPLES; i++) {
+    var rippleLoc = this._rippleLocs[i];
+    if (i < count) {
+      var ripple = this.ripples[i];
+      var point = this._devicePoint(ripple.x, ripple.y);
+      gl.uniform4f(rippleLoc, point.x, point.y, ripple.start, ripple.strength);
+    } else {
+      gl.uniform4f(rippleLoc, 0, 0, -100, 0);
+    }
+  }
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
+
+FluidEngine.prototype._renderGlass = function (time) {
+  var gl = this.gl;
+  var loc = this._glassLoc;
+  var params = this.params;
+  if (!loc) return;
+
+  gl.viewport(0, 0, this.width, this.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(this.glassProgram);
+  bindQuad(gl, this.buffer, loc._position);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, this.bgTexture);
+  gl.uniform1i(loc.u_texture, 0);
+  gl.uniform2f(loc.u_resolution, this.width, this.height);
+  gl.uniform1f(loc.u_glassW, params.glassW);
+  gl.uniform1f(loc.u_glassH, params.glassH);
+  gl.uniform1f(loc.u_glassR, params.glassR);
+  gl.uniform1f(loc.u_distortDepth, params.distortDepth);
+  gl.uniform1f(loc.u_distortStrength, params.distortStrength);
+  gl.uniform1f(loc.u_chromaShift, params.chromaShift);
+  gl.uniform1f(loc.u_glassTint, params.glassTint);
+  this._uploadPointer(gl, loc);
+  gl.uniform1f(loc.u_time, this._reduceMotion ? 0 : time);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
+
+FluidEngine.prototype._drawFrame = function () {
+  if (!this.bgFBO || !this.bgTexture || !this.buffer) return;
+  var time = this._now();
+  this._pruneRipples(time);
+  this._renderBackground(time);
+  if (this.effect === 'glass') this._renderGlass(time);
+  else this._renderWater(time);
+
+  this._frameCount++;
+  var now = performance.now();
+  if (!this._lastFpsTime) this._lastFpsTime = now;
+  if (now - this._lastFpsTime >= 1000) {
+    this.fps = Math.round(this._frameCount * 1000 / (now - this._lastFpsTime));
+    this._frameCount = 0;
+    this._lastFpsTime = now;
   }
 };
 
-// Expose
-global.FluidEngine = FluidEngine;
-global.FluidEngineDefaults = DEFAULT_PARAMS;
+FluidEngine.prototype._scheduleNext = function () {
+  if (this._destroyed || typeof root.requestAnimationFrame !== 'function') return;
+  this._frame = root.requestAnimationFrame(this._loopBound);
+};
 
-})(typeof window !== 'undefined' ? window : this);
+FluidEngine.prototype._loop = function () {
+  if (this._destroyed) return;
+  if (!this._contextLost && this.ready) this._drawFrame();
+  this._scheduleNext();
+};
+
+FluidEngine.prototype.setParam = function (name, value) {
+  if (this._destroyed) return;
+  if (!hasOwn(this.params, name)) return;
+  if (typeof value !== 'number' || !isFinite(value)) return;
+  this.params[name] = value;
+};
+
+FluidEngine.prototype.getParam = function (name) {
+  return this.params[name];
+};
+
+FluidEngine.prototype.setEffect = function (effect) {
+  if (this._destroyed) return;
+  if (effect !== 'water' && effect !== 'glass') return;
+  if (effect === 'water' && !this.waterProgram) return;
+  if (effect === 'glass' && !this.glassProgram) return;
+  this.effect = effect;
+};
+
+FluidEngine.prototype.dispose = function () {
+  if (this._destroyed) return;
+  this._destroyed = true;
+  this.ready = false;
+  if (this._frame != null && typeof root.cancelAnimationFrame === 'function') {
+    root.cancelAnimationFrame(this._frame);
+  }
+  if (this._resizeObserver) {
+    this._resizeObserver.disconnect();
+    this._resizeObserver = null;
+  }
+  if (this._usingWindowResize && typeof root.removeEventListener === 'function') {
+    root.removeEventListener('resize', this._resizeBound);
+  }
+  if (this._reduceMotionMq && this._onReduceMotion) {
+    if (typeof this._reduceMotionMq.removeEventListener === 'function') {
+      this._reduceMotionMq.removeEventListener('change', this._onReduceMotion);
+    } else if (typeof this._reduceMotionMq.removeListener === 'function') {
+      this._reduceMotionMq.removeListener(this._onReduceMotion);
+    }
+  }
+  if (this.canvas && this._onContextLost) {
+    this.canvas.removeEventListener('webglcontextlost', this._onContextLost);
+    this.canvas.removeEventListener('webglcontextrestored', this._onContextRestored);
+  }
+  this._removeInteraction();
+  this._deleteGLResources();
+  this.ripples = [];
+};
+
+FluidEngine.prototype.destroy = function () {
+  this.dispose();
+};
+
+root.FluidEngine = FluidEngine;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { FluidEngine: FluidEngine };
+}
+})(typeof window !== 'undefined' ? window : typeof globalThis !== 'undefined' ? globalThis : this);

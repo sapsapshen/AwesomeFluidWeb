@@ -1,5 +1,13 @@
 {
-  "dependencies": {
-    "ws": "^8.21.0"
+  "name": "awesome-fluid-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebGL water-surface and liquid-glass effects for the browser.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --check fluid-engine.js && node --test ./test/fluid-engine.test.js"
   }
 }
